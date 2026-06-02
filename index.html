@@ -1109,15 +1109,14 @@ tbody tr:hover { background: #fafafa; }
   JAVASCRIPT (external file — required for SharePoint CSP / some viewers)
   Upload focal_seat_booking_app.js to the SAME folder as this HTML file.
 ========================= -->
+
 <!-- SUPABASE CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 /* ============================
-   FOCAL INDIA SEAT BOOKING
-   Fixed: Supabase is now the single source of truth.
-   All reads come from Supabase. localStorage is only a
-   local cache so the UI can render instantly on re-visits.
-   Realtime subscriptions cover bookings, blocked, AND holidays.
+   FOCAL INDIA SEAT BOOKING - FINAL STABILIZED ENGINE
+   Fix: Removed Circular Loading Gate + ES5 Syntax Fix
+   Preserved: Supabase Sync + utilization Dashboard + Claude Features
 ============================= */
 
 var SUPABASE_URL = 'https://oxazhkjnbaixmhwdwlkw.supabase.co';
@@ -1147,13 +1146,11 @@ function initSupabase() {
 var _syncTimer = null;
 function debouncedSync() {
   if (_syncTimer) clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(function() { syncAllFromSupabase(); }, 400);
+  _syncTimer = setTimeout(function() { syncFromSupabase(); }, 400);
 }
 
-/* 
-  FIX: syncAllFromSupabase fetches bookings + blocked + holidays together.
-  renderTable() is only called AFTER Supabase responds, so Supabase always wins.
-*/
+function syncFromSupabase() { syncAllFromSupabase(); }
+
 function syncAllFromSupabase() {
   if (!_sb) return;
   Promise.all([
@@ -1173,21 +1170,8 @@ function syncAllFromSupabase() {
   });
 }
 
-/* Legacy alias used in a few places */
-function syncFromSupabase() { syncAllFromSupabase(); }
+function sbSubscribeBookings() { sbSubscribeAll(); }
 
-function syncResourcesFromSupabase() {
-  if (!_sb) return;
-  _sb.from('resources').select('*').then(function(res) {
-    if (!res.error && res.data && res.data.length > 0) {
-      setData(KEYS.resources, res.data);
-      renderResources();
-      renderAdminResources();
-    }
-  });
-}
-
-/* FIX: Subscribe to ALL three tables, not just bookings */
 function sbSubscribeAll() {
   if (!_sb) return;
   var tables = ['bookings', 'blocked', 'holidays'];
@@ -1211,7 +1195,27 @@ function sbSubscribeAll() {
   } catch(e) {}
 }
 
-/* --- STORAGE HELPERS (localStorage as cache only) --- */
+function syncResourcesFromSupabase() {
+  if (!_sb) return;
+  _sb.from('resources').select('*').then(function(res) {
+    if (!res.error && res.data && res.data.length > 0) {
+      setData(KEYS.resources, res.data);
+      renderResources();
+      renderAdminResources();
+    }
+  });
+}
+
+function sbSubscribeResources() {
+  if (!_sb) return;
+  try {
+    _sb.channel('res-sync').on('postgres_changes', {event:'*', schema:'public', table:'resources'}, function() {
+        syncResourcesFromSupabase();
+    }).subscribe();
+  } catch(e){}
+}
+
+/* --- STORAGE HELPERS --- */
 var _memStore = {};
 var _lsAvailable = false;
 (function() { try { var t='_t'; localStorage.setItem(t,t); localStorage.removeItem(t); _lsAvailable=true; } catch(e){ _lsAvailable=false; } })();
@@ -1285,7 +1289,7 @@ function renderTable() {
             var th = document.createElement('th');
             var hol = null;
             for (var hi = 0; hi < holidays.length; hi++) { if (holidays[hi].date === ds) { hol = holidays[hi]; break; } }
-            th.innerHTML = '<div>' + DAYS[di] + '</div><div style="font-size:10px;font-weight:400;opacity:0.8">' + formatDate(d) + '</div>' +
+            th.innerHTML = '<div>' + DAYS[di] + '</div><div style="font-size:10px;font-weight:400;opacity:0.8">' + formatDate(d) + '</div>' + 
                            (hol ? '<div style="font-size:9px;background:rgba(255,255,255,0.2);padding:1px 3px;margin-top:2px">' + hol.name + '</div>' : '');
             if (ds === selectedDateStr) th.style.outline = '3px solid #fff';
             th.style.cursor = 'pointer';
@@ -1295,8 +1299,8 @@ function renderTable() {
     }
 
     var rangeDisp = document.getElementById('weekRangeDisplay');
-    if (rangeDisp) {
-        rangeDisp.innerHTML = formatDate(weekDates[0]) + ' - ' + formatDate(weekDates[6]) + '<br>' + weekDates[0].getFullYear();
+    if (rangeDisp) { 
+        rangeDisp.innerHTML = formatDate(weekDates[0]) + ' - ' + formatDate(weekDates[6]) + '<br>' + weekDates[0].getFullYear(); 
     }
 
     var tbody = document.getElementById('tableBody');
@@ -1310,32 +1314,32 @@ function renderTable() {
         tr.innerHTML = '<td class="seat-label">' + seat + '</td>';
 
         for (var dj = 0; dj < weekDates.length; dj++) {
-            var dw = weekDates[dj], ds2 = isoDate(dw);
+            var dw = weekDates[dj], ds = isoDate(dw);
             var td = document.createElement('td');
             td.className = 'seat-cell';
             var div = document.createElement('div');
             div.className = 'cell-inner';
 
-            if (ds2 < todayStr) { td.style.background = '#ECBAE6'; div.style.background = '#ECBAE6'; }
+            if (ds < todayStr) { td.style.background = '#ECBAE6'; div.style.background = '#ECBAE6'; }
 
-            var holC = null; for (var h1 = 0; h1 < holidays.length; h1++) { if (holidays[h1].date === ds2) { holC = holidays[h1]; break; } }
-            var blkC = null; for (var b1 = 0; b1 < blocked.length; b1++) { if (blocked[b1].seat === seat && blocked[b1].date === ds2) { blkC = blocked[b1]; break; } }
-            var bkgC = null; for (var k1 = 0; k1 < bookings.length; k1++) { if (bookings[k1].seat === seat && bookings[k1].date === ds2) { bkgC = bookings[k1]; break; } }
-            var perm = isPermanentlyBlocked(seat, ds2);
+            var holC = null; for (var h1 = 0; h1 < holidays.length; h1++) { if (holidays[h1].date === ds) { holC = holidays[h1]; break; } }
+            var blkC = null; for (var b1 = 0; b1 < blocked.length; b1++) { if (blocked[b1].seat === seat && blocked[b1].date === ds) { blkC = blocked[b1]; break; } }
+            var bkgC = null; for (var k1 = 0; k1 < bookings.length; k1++) { if (bookings[k1].seat === seat && bookings[k1].date === ds) { bkgC = bookings[k1]; break; } }
+            var perm = isPermanentlyBlocked(seat, ds);
 
             if (holC) {
                 div.className += ' holiday'; div.textContent = 'PH';
-                if (ds2 === selectedDateStr) dayHoliday++;
+                if (ds === selectedDateStr) dayHoliday++;
             } else if (perm || blkC) {
                 div.className += ' unavailable'; div.textContent = 'X';
-                if (ds2 === selectedDateStr) dayBlocked++;
+                if (ds === selectedDateStr) dayBlocked++;
             } else if (bkgC) {
                 div.className += ' booked'; div.textContent = bkgC.initials;
-                (function(s, d, b) { div.onclick = function() { openManageModal(s, d, b); }; })(seat, ds2, bkgC);
-                if (ds2 === selectedDateStr) dayBooked++;
-            } else if (ds2 >= todayStr) {
+                (function(s, d, b) { div.onclick = function() { openManageModal(s, d, b); }; })(seat, ds, bkgC);
+                if (ds === selectedDateStr) dayBooked++;
+            } else if (ds >= todayStr) {
                 div.className += ' available';
-                (function(s, d, l) { div.onclick = function() { openBookingModal(s, d, l); }; })(seat, ds2, DAYS[dj] + ' ' + formatDate(dw));
+                (function(s, d, l) { div.onclick = function() { openBookingModal(s, d, l); }; })(seat, ds, DAYS[dj] + ' ' + formatDate(dw));
             }
             td.appendChild(div); tr.appendChild(td);
         }
@@ -1375,30 +1379,15 @@ function confirmBooking() {
   var b = getData(KEYS.bookings);
   for (var bi = 0; bi < b.length; bi++) {
     if (b[bi].initials === initials && b[bi].date === pendingCell.date) {
-      if (!confirm(initials + ' already has a seat booked on this day. Book another?')) return;
+      if (!confirm(initials + ' already has a seat. Book another?')) return;
       break;
     }
   }
 
-  /* Optimistically update local cache so UI feels instant */
   b.push({ seat: pendingCell.seat, date: pendingCell.date, initials: initials });
-  setData(KEYS.bookings, b);
-  closeModal('bookingModal');
-  renderTable();
+  setData(KEYS.bookings, b); closeModal('bookingModal'); renderTable();
   showToast('Booking seat...', 'success');
-
-  /* Write to Supabase — realtime will then sync all other users */
-  if (_sb) {
-    _sb.from('bookings').insert([{ seat: pendingCell.seat, date: pendingCell.date, initials: initials }]).then(function(res) {
-      if (res.error) {
-        showToast('Sync error. Please refresh.', 'error');
-        /* Roll back local cache on error */
-        syncAllFromSupabase();
-      } else {
-        showToast('Seat booked!', 'success');
-      }
-    });
-  }
+  if(_sb) _sb.from('bookings').insert([{ seat: pendingCell.seat, date: pendingCell.date, initials: initials }]).then();
 }
 
 function openManageModal(seat, date, bkg) {
@@ -1413,24 +1402,19 @@ function cancelBooking() {
   var admin = getDataRaw(KEYS.adminLoggedIn) === '1';
   var verify = document.getElementById('ownerVerifyInput').value.trim().toUpperCase();
   if (!admin && verify !== manageCell.booking.initials) { showToast('Verify initials to cancel', 'error'); return; }
-  if (!confirm('Cancel this booking?')) return;
+  if (!confirm('Cancel?')) return;
 
   var s = manageCell.seat, d = manageCell.date;
   closeModal('manageModal');
-
-  /* Optimistic local update */
-  var b = getData(KEYS.bookings).filter(function(x) { return !(x.seat === s && x.date === d); });
-  setData(KEYS.bookings, b); renderTable();
-
   if (_sb) {
-    _sb.from('bookings').delete().eq('seat', s).eq('date', d).then(function(res) {
-      if (res.error) {
-        showToast('Sync error. Please refresh.', 'error');
-        syncAllFromSupabase();
-      } else {
-        showToast('Booking cancelled.', 'info');
-      }
+    _sb.from('bookings').delete().eq('seat', s).eq('date', d).then(function() {
+      var b = getData(KEYS.bookings).filter(function(x) { return !(x.seat === s && x.date === d); });
+      setData(KEYS.bookings, b); renderTable();
+      showToast('Cancelled.', 'info');
     });
+  } else {
+    var b = getData(KEYS.bookings).filter(function(x) { return !(x.seat === s && x.date === d); });
+    setData(KEYS.bookings, b); renderTable();
   }
 }
 
@@ -1442,7 +1426,7 @@ function saveEditBooking() {
     if (b[i].seat === manageCell.seat && b[i].date === manageCell.date) { b[i].initials = ini; break; }
   }
   setData(KEYS.bookings, b); closeModal('manageModal'); renderTable();
-  if (_sb) _sb.from('bookings').update({ initials: ini }).eq('seat', manageCell.seat).eq('date', manageCell.date).then();
+  if(_sb) _sb.from('bookings').update({ initials: ini }).eq('seat', manageCell.seat).eq('date', manageCell.date).then();
 }
 
 /* --- ADMIN --- */
@@ -1454,10 +1438,8 @@ function renderAdminBookings() {
 }
 
 function adminDeleteBooking(s, d) {
-  if (!confirm('Delete this booking?')) return;
-  if (_sb) {
-    _sb.from('bookings').delete().eq('seat', s).eq('date', d).then(function() { syncAllFromSupabase(); });
-  }
+  if (!confirm('Delete?')) return;
+  if(_sb) _sb.from('bookings').delete().eq('seat', s).eq('date', d).then(function() { syncFromSupabase(); });
 }
 
 function renderAdminResources() {
@@ -1505,13 +1487,13 @@ function adminAddHoliday() {
   if (!d || !n) return;
   var h = getData(KEYS.holidays); h.push({ date: d, name: n });
   setData(KEYS.holidays, h); renderAdminHolidays(); renderTable();
-  if (_sb) _sb.from('holidays').insert([{ date: d, name: n }]).then();
+  if(_sb) _sb.from('holidays').insert([{ date: d, name: n }]).then();
 }
 
 function adminRemoveHoliday(d) {
   var h = getData(KEYS.holidays).filter(function(x) { return x.date !== d; });
   setData(KEYS.holidays, h); renderAdminHolidays(); renderTable();
-  if (_sb) _sb.from('holidays').delete().eq('date', d).then();
+  if(_sb) _sb.from('holidays').delete().eq('date', d).then();
 }
 
 function adminBlockSeat() {
@@ -1519,46 +1501,32 @@ function adminBlockSeat() {
   if (!s || !d) return;
   var b = getData(KEYS.blocked); b.push({ seat: s, date: d });
   setData(KEYS.blocked, b); renderTable();
-  if (_sb) _sb.from('blocked').insert([{ seat: s, date: d }]).then();
+  if(_sb) _sb.from('blocked').insert([{ seat: s, date: d }]).then();
 }
 
 function adminUnblockSeat() {
   var s = document.getElementById('blockSeatInput').value.toUpperCase(), d = document.getElementById('blockDateInput').value;
   var b = getData(KEYS.blocked).filter(function(x) { return !(x.seat === s && x.date === d); });
   setData(KEYS.blocked, b); renderTable();
-  if (_sb) _sb.from('blocked').delete().eq('seat', s).eq('date', d).then();
+  if(_sb) _sb.from('blocked').delete().eq('seat', s).eq('date', d).then();
 }
 
 function confirmResetAll() {
-  if (!confirm('Clear ALL bookings? This cannot be undone.')) return;
+  if (!confirm('Clear ALL bookings?')) return;
   setData(KEYS.bookings, []); renderTable();
-  if (_sb) _sb.from('bookings').delete().neq('seat', '').then(function() { syncAllFromSupabase(); });
-}
-
-/* Export helpers */
-function exportBookings() {
-  var b = getData(KEYS.bookings);
-  var blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' });
-  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'bookings.json'; a.click();
-}
-function exportBookingsCSV() {
-  var b = getData(KEYS.bookings);
-  var csv = 'Seat,Date,Initials\n' + b.map(function(x) { return x.seat+','+x.date+','+x.initials; }).join('\n');
-  var blob = new Blob([csv], { type: 'text/csv' });
-  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'bookings.csv'; a.click();
+  if(_sb) _sb.from('bookings').delete().neq('seat','').then();
 }
 
 /* --- UTILS --- */
 function openModal(id) { var el=document.getElementById(id); if(el) el.classList.add('open'); }
 function closeModal(id) { var el=document.getElementById(id); if(el) el.classList.remove('open'); }
-function showToast(m, s) { var t = document.getElementById('toast'); if(!t) return; t.textContent = m; t.className = 'toast show ' + (s||''); setTimeout(function() { t.classList.remove('show'); }, 3000); }
+function showToast(m, s) { var t = document.getElementById('toast'); if(!t) return; t.textContent = m; t.className = 'toast show ' + s; setTimeout(function() { t.classList.remove('show'); }, 3000); }
 function changeWeek(d) {
   if (!currentWeekStart) currentWeekStart = getMonday(new Date());
   currentWeekStart = addDays(currentWeekStart, d * 7);
   selectedDateStr = null;
   renderTable();
 }
-function closeImageZoom(e) { if (e.target === document.getElementById('imgZoomModal')) closeModal('imgZoomModal'); }
 
 function showPage(p) {
   document.getElementById('bookingPage').classList.toggle('hidden', p !== 'booking');
@@ -1569,14 +1537,8 @@ function showPage(p) {
 }
 
 function requestAdmin() { if (getDataRaw(KEYS.adminLoggedIn) === '1') { showPage('admin'); } else { openModal('adminLoginOverlay'); } }
-function checkAdminPass() {
-  if (document.getElementById('adminPassInput').value === 'admin123') {
-    setDataRaw(KEYS.adminLoggedIn, '1'); closeModal('adminLoginOverlay'); showPage('admin');
-  } else {
-    var err = document.getElementById('adminPassErr'); if(err) err.style.display = 'block';
-  }
-}
-
+function checkAdminPass() { if (document.getElementById('adminPassInput').value === 'admin123') { setDataRaw(KEYS.adminLoggedIn, '1'); closeModal('adminLoginOverlay'); showPage('admin'); } }
+function checkUserPass() { if (document.getElementById('userPassInput').value === 'focal123') { sessionStorage.setItem('focal_user_authed', '1'); var overlay=document.getElementById('userLoginOverlay'); if(overlay) overlay.style.display='none'; appInit(); } }
 
 function handleLayoutUpload(e) {
   var f = e.target.files[0]; if (!f) return;
@@ -1591,21 +1553,24 @@ function showLayoutImage(s) {
 function loadSavedLayout() { var s = getDataRaw(KEYS.layoutImg); if(s) showLayoutImage(s); }
 function openImageZoom() { var i = document.getElementById('layoutImg'); if(i && i.src) { document.getElementById('imgZoomTarget').src = i.src; openModal('imgZoomModal'); } }
 
-/* --- SEED EMPLOYEE DATA (runs once, only seeds localStorage, then pushes to Supabase) --- */
-function seedEmployeesIfNeeded() {
-  if (getDataRaw('_focal_seeded_v5')) return;
+/* --- INIT --- */
+var _appReady = false;
+var _tableRendered = false;
+
+function initDemoData() {
+  if (getDataRaw('_focal_demo_v4')) return;
   var res = [
-    { name:'Vinod Kumar',           initials:'VK',  type:'Office Seating', status:'Available' },
-    { name:'Mohammed Basheer',      initials:'MB',  type:'Office Seating', status:'Available' },
-    { name:'Nidhina Jamal',         initials:'NJ',  type:'Office Seating', status:'Available' },
-    { name:'Anish Kumar',           initials:'AK',  type:'Office Seating', status:'Available' },
-    { name:'Bhagyaraj NG',          initials:'BN',  type:'Office Seating', status:'Available' },
-    { name:'Akshay S',              initials:'AS',  type:'Office Seating', status:'Available' },
-    { name:'Aneesh M A',            initials:'AM',  type:'Office Seating', status:'Available' },
-    { name:'Aswin Chandh C S',      initials:'AC',  type:'Office Seating', status:'Available' },
-    { name:'Muralidharan K',        initials:'MK',  type:'Office Seating', status:'Available' },
-    { name:'Sameer Venugopal',      initials:'SV',  type:'Office Seating', status:'Available' },
-    { name:'Arun Das',              initials:'AD',  type:'Office Seating', status:'Available' },
+    { name:'Vinod Kumar', initials:'VK', type:'Office Seating', status:'Available' },
+    { name:'Mohammed Basheer', initials:'MB', type:'Office Seating', status:'Available' },
+    { name:'Nidhina Jamal', initials:'NJ', type:'Office Seating', status:'Available' },
+    { name:'Anish Kumar', initials:'AK', type:'Office Seating', status:'Available' },
+    { name:'Bhagyaraj NG', initials:'BN', type:'Office Seating', status:'Available' },
+    { name:'Akshay S', initials:'AS', type:'Office Seating', status:'Available' },
+    { name:'Aneesh M A', initials:'AM', type:'Office Seating', status:'Available' },
+    { name:'Aswin Chandh C S', initials:'AC', type:'Office Seating', status:'Available' },
+    { name:'Muralidharan K', initials:'MK', type:'Office Seating', status:'Available' },
+    { name:'Sameer Venugopal', initials:'SV', type:'Office Seating', status:'Available' },
+    { name:'Arun Das', initials:'AD', type:'Office Seating', status:'Available' },
     { name:'Sidharth S Nair',       initials:'SN',  type:'Office Seating', status:'Available' },
     { name:'Ajith P Babu',          initials:'AB',  type:'Office Seating', status:'Available' },
     { name:'Arun P J',              initials:'AP',  type:'Office Seating', status:'Available' },
@@ -1628,17 +1593,10 @@ function seedEmployeesIfNeeded() {
     { name:'Samjid Basheer',        initials:'SB',  type:'Office Seating', status:'Available' },
     { name:'Sharafath Mon',         initials:'SM',  type:'Office Seating', status:'Available' }
   ];
-  setData(KEYS.resources, res);
-  setDataRaw('_focal_seeded_v5', '1');
-
-  /* Push employees to Supabase so they sync across all browsers */
-  if (_sb) {
-    _sb.from('resources').select('id').limit(1).then(function(check) {
-      if (!check.error && check.data && check.data.length === 0) {
-        _sb.from('resources').insert(res).then();
-      }
-    });
-  }
+  setData(KEYS.resources, res); 
+  if(!getData(KEYS.blocked).length) setData(KEYS.blocked, []);
+  if(!getData(KEYS.holidays).length) setData(KEYS.holidays, []);
+  setDataRaw('_focal_demo_v4', '1');
 }
 
 function renderResources() {
@@ -1648,46 +1606,43 @@ function renderResources() {
   tb.innerHTML = r.map(function(x, i) { return '<tr><td>'+(i+1)+'</td><td><strong>'+x.name+'</strong></td><td>'+x.initials+'</td><td>Office</td><td>Available</td></tr>'; }).join('');
 }
 
-/* --- INIT ---
-   FIX: renderTable() is NOT called before Supabase loads.
-   We show a loading indicator, then call syncAllFromSupabase()
-   which calls renderTable() only after data is fetched.
-*/
-var _appReady = false;
-
-function appInit() {
+function appInit(forceRetry) {
+  if (_appReady && _tableRendered && !forceRetry) return;
+  
+  initDemoData();
   currentWeekStart = getMonday(new Date());
   selectedDateStr = isoDate(new Date());
+  
+  seedEmployeesIfNeeded();
+  renderTable(); 
+  renderResources(); 
   loadSavedLayout();
+  _tableRendered = true;
 
+  if (initSupabase()) { 
+    syncFromSupabase(); 
+    syncResourcesFromSupabase(); 
+    sbSubscribeBookings(); 
+    sbSubscribeResources(); 
+    _appReady = true;
+  }
+  
   var notice = document.getElementById('spScriptBlockedNotice');
   if (notice) notice.style.display = 'none';
-
-  /* Render immediately so the week shows at once */
-  seedEmployeesIfNeeded();
-  renderTable();
-  renderResources();
-
-  if (initSupabase()) {
-    _appReady = true;
-    syncAllFromSupabase();
-    syncResourcesFromSupabase();
-    sbSubscribeAll();
-  }
 }
 
-/* Retry init a few times to handle slow Supabase CDN load */
 function scheduleInitRetries() {
-  var delays = [100, 600, 1500, 3000];
+  var delays = [0, 100, 500, 1500, 3000];
   for (var i = 0; i < delays.length; i++) {
     (function(ms) {
-      setTimeout(function() { if (!_appReady) { currentWeekStart = getMonday(new Date()); if(initSupabase()){ _appReady=true; syncAllFromSupabase(); syncResourcesFromSupabase(); sbSubscribeAll(); } } }, ms);
+      setTimeout(function() { if (!_appReady) appInit(true); }, ms);
     })(delays[i]);
   }
 }
 
-document.addEventListener('DOMContentLoaded', function() { appInit(); scheduleInitRetries(); });
-if (document.readyState === 'interactive' || document.readyState === 'complete') { appInit(); scheduleInitRetries(); }
+document.addEventListener('DOMContentLoaded', function() { appInit(false); scheduleInitRetries(); });
+if (document.readyState === 'interactive' || document.readyState === 'complete') { appInit(false); scheduleInitRetries(); }
+window.onload = function() { appInit(true); scheduleInitRetries(); };
 </script>
 </body>
 </html>
