@@ -1470,18 +1470,27 @@ function renderAdminResources() {
 function adminAddResource() {
   var n = document.getElementById('resNameInput').value.trim(), i = document.getElementById('resInitialsInput').value.trim().toUpperCase();
   if (!n || !i) return;
-  var r = getData(KEYS.resources);
-  r.push({ name: n, initials: i, type: 'Office Seating', status: 'Available' });
-  setData(KEYS.resources, r); renderAdminResources();
   document.getElementById('resNameInput').value = ''; document.getElementById('resInitialsInput').value = '';
-  if (_sb) _sb.from('resources').insert([{ name: n, initials: i, type: 'Office Seating', status: 'Available' }]).then();
+  if (_sb) {
+    _sb.from('resources').insert([{ name: n, initials: i, type: 'Office Seating', status: 'Available' }]).then(function(res) {
+      if (res.error) { showToast('Error adding employee', 'error'); return; }
+      syncResourcesFromSupabase();
+      showToast(n + ' added!', 'success');
+    });
+  }
 }
 
 function adminDeleteResource(idx) {
   var r = getData(KEYS.resources);
-  var target = r.splice(idx, 1)[0];
-  setData(KEYS.resources, r); renderAdminResources();
-  if (_sb && target) _sb.from('resources').delete().eq('initials', target.initials).then();
+  var target = r[idx];
+  if (!target) return;
+  if (!confirm('Remove ' + target.name + '?')) return;
+  if (_sb) {
+    _sb.from('resources').delete().eq('initials', target.initials).then(function() {
+      syncResourcesFromSupabase();
+      showToast('Employee removed.', 'info');
+    });
+  }
 }
 
 function renderAdminHolidays() {
