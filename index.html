@@ -1179,7 +1179,7 @@ function syncFromSupabase() { syncAllFromSupabase(); }
 function syncResourcesFromSupabase() {
   if (!_sb) return;
   _sb.from('resources').select('*').then(function(res) {
-    if (!res.error && res.data && res.data.length > 0) {
+    if (!res.error && res.data) {
       setData(KEYS.resources, res.data);
       renderResources();
       renderAdminResources();
@@ -1470,18 +1470,23 @@ function renderAdminResources() {
 function adminAddResource() {
   var n = document.getElementById('resNameInput').value.trim(), i = document.getElementById('resInitialsInput').value.trim().toUpperCase();
   if (!n || !i) return;
-  var r = getData(KEYS.resources);
-  r.push({ name: n, initials: i, type: 'Office Seating', status: 'Available' });
-  setData(KEYS.resources, r); renderAdminResources();
   document.getElementById('resNameInput').value = ''; document.getElementById('resInitialsInput').value = '';
-  if (_sb) _sb.from('resources').insert([{ name: n, initials: i, type: 'Office Seating', status: 'Available' }]).then();
+  if (_sb) {
+    _sb.from('resources').insert([{ name: n, initials: i, type: 'Office Seating', status: 'Available' }]).then(function() {
+      syncResourcesFromSupabase();
+    });
+  }
 }
-
+  
 function adminDeleteResource(idx) {
   var r = getData(KEYS.resources);
-  var target = r.splice(idx, 1)[0];
-  setData(KEYS.resources, r); renderAdminResources();
-  if (_sb && target) _sb.from('resources').delete().eq('initials', target.initials).then();
+  var target = r[idx];
+  if (!target) return;
+  if (_sb) {
+    _sb.from('resources').delete().eq('initials', target.initials).then(function() {
+      syncResourcesFromSupabase();
+    });
+  }
 }
 
 function renderAdminHolidays() {
