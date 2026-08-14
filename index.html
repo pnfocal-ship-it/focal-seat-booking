@@ -1331,6 +1331,9 @@ function renderTable() {
                 if (ds2 === selectedDateStr) dayBlocked++;
             } else if (bkgC) {
                 div.className += ' booked'; div.textContent = bkgC.initials;
+                var empName = ''; var resList = getData(KEYS.resources);
+                for (var ri = 0; ri < resList.length; ri++) { if (resList[ri].initials === bkgC.initials) { empName = resList[ri].name; break; } }
+                div.title = empName ? empName + ' (' + bkgC.initials + ')' : bkgC.initials;
                 (function(s, d, b) { div.onclick = function() { openManageModal(s, d, b); }; })(seat, ds2, bkgC);
                 if (ds2 === selectedDateStr) dayBooked++;
             } else if (ds2 >= todayStr) {
