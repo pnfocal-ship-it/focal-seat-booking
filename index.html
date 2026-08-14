@@ -1253,7 +1253,7 @@ function isoDate(d) {
 var currentWeekStart = null, pendingCell = null, manageCell = null, selectedDateStr = null;
 var SEATS = (function() { var a=[]; for(var i=1;i<=31;i++) a.push('S'+(i<10?'0':'')+i); return a; })();
 var DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-var PERMANENT_BLOCKED_SEATS = ['S01', 'S15', 'S21', 'S26'];
+var PERMANENT_BLOCKED_SEATS = ['S01'];
 var PERMANENT_BLOCK_UNTIL = '2026-12-31';
 
 function isPermanentlyBlocked(seat, dateStr) {
