@@ -1157,7 +1157,7 @@ function debouncedSync() {
 function syncAllFromSupabase() {
   if (!_sb) return;
   Promise.all([
-    _sb.from('bookings').select('seat,date,initials'),
+    _sb.from('bookings').select('seat,date,initials').gte('date', isoDate(addDays(new Date(), -7))),
     _sb.from('blocked').select('seat,date'),
     _sb.from('holidays').select('date,name')
   ]).then(function(results) {
